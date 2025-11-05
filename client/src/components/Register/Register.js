@@ -74,7 +74,8 @@ function Register(props) {
           type="text"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-        ></input>
+          autoComplete="off"
+        />
       </div>
       <div>
         <label>First Name</label>
@@ -98,7 +99,8 @@ function Register(props) {
           type="password"
           value={pass}
           onChange={(e) => setPass(e.target.value)}
-        ></input>
+          autoComplete="new-password"
+        />
       </div>
       {error && <div className="error-message">{error}</div>}
       <div className="radio-group">

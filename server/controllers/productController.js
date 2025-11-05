@@ -79,9 +79,10 @@ exports.setProductImage = (req, res) => {
     if (!req.file) {
         return res.status(400).json({ error: 'No image uploaded' });
     }
-    const imageUrl = `/uploads/${req.file.filename}`;
-    productModel.updateProductImage(productId, imageUrl)
-        .then(() => res.json({ imageUrl }))
+    const relativePath = `/uploads/${req.file.filename}`;
+    const fullUrl = `${req.protocol}://${req.get('host')}${relativePath}`;
+    productModel.updateProductImage(productId, relativePath)
+        .then(() => res.json({ imageUrl: relativePath, imageFullUrl: fullUrl }))
         .catch((err) => {
             console.error('Failed to update imageUrl:', err);
             res.status(500).json({ error: 'Failed to save image URL' });

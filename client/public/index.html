@@ -29,6 +29,27 @@
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>
     <div id="root"></div>
+    <script>
+      // Silences errors thrown by browser extensions' content scripts.
+      // These do not affect your app logic but clutter the console.
+      window.addEventListener('error', function (e) {
+        try {
+          if (e && typeof e.filename === 'string' && e.filename.startsWith('chrome-extension://')) {
+            e.preventDefault();
+            return false;
+          }
+        } catch (_) {}
+      });
+      window.addEventListener('unhandledrejection', function (e) {
+        try {
+          var msg = String((e && e.reason && (e.reason.stack || e.reason.message)) || '');
+          if (msg.indexOf('chrome-extension://') !== -1) {
+            e.preventDefault();
+            return false;
+          }
+        } catch (_) {}
+      });
+    </script>
     <!--
       This HTML file is a template.
       If you open it directly in the browser, you will see an empty page.

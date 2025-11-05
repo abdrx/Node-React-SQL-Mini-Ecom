@@ -1,62 +1,36 @@
-.shopping-cart-table {
-    width: 100%;
-    border-collapse: collapse;
-}
+/* Overlay and drawer */
+.cart-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);opacity:0;pointer-events:none;transition:opacity .2s ease;z-index:2000}
+.cart-overlay.visible{opacity:1;pointer-events:auto}
+.cart-drawer{position:fixed;top:0;right:0;height:100vh;width:420px;max-width:95vw;background:#fff;color:#000;transform:translateX(100%);transition:transform .25s ease;z-index:2001;display:flex;flex-direction:column;box-shadow:-8px 0 24px rgba(0,0,0,.2)}
+.cart-drawer.open{transform:translateX(0)}
 
-.shopping-cart-table th,
-.shopping-cart-table td {
-    border: 1px solid #ddd;
-    padding: 8px;
-    text-align: left;
-}
+.cart-header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #eee}
+.cart-header .icon-btn{background:#fff;border:1px solid #ddd;border-radius:6px;width:32px;height:32px;cursor:pointer}
 
-.shopping-cart-table th {
-    background-color: #f2f2f2;
-}
+.cart-body{padding:12px 16px;display:flex;flex-direction:column;gap:12px;flex:1;overflow:auto}
 
-.shopping-cart-table tbody tr:nth-child(even) {
-    background-color: #f2f2f2;
-}
+.shopping-cart-table{width:100%;border-collapse:collapse}
+.shopping-cart-table th,.shopping-cart-table td{border:1px solid #eee;padding:8px;text-align:left}
+.shopping-cart-table th{background:#f9f9f9}
+.shopping-cart-table td button{background:#f44336;color:#fff;border:none;padding:5px 10px;cursor:pointer;border-radius:4px}
+.shopping-cart-table td button:hover{background:#d32f2f}
 
-.shopping-cart-table tbody tr:hover {
-    background-color: #ddd;
-}
+.cart-totals{border-top:1px solid #eee;padding-top:8px}
+.cart-totals .row{display:flex;justify-content:space-between;margin:6px 0}
+.cart-totals .row.total{font-size:18px}
 
-.shopping-cart-table td button {
-    background-color: #f44336;
-    color: white;
-    border: none;
-    padding: 5px 10px;
-    cursor: pointer;
-}
+.payment-section{border-top:1px solid #eee;padding-top:8px}
+.payment-section .section-title{font-weight:600;margin-bottom:6px}
+.payment-section .radio{display:flex;gap:8px;align-items:center}
 
-.shopping-cart-table td button:hover {
-    background-color: #d32f2f;
-}
+.address-container{display:flex;align-items:center;gap:10px;padding-top:10px}
+.address-input{flex:1;padding:8px;border:1px solid #ccc;border-radius:6px}
+.buy-button{background:#000;color:#fff;border:1px solid #000;padding:10px 16px;border-radius:6px;cursor:pointer}
+.buy-button:hover{opacity:.9}
 
-.address-container {
-    display: flex;
-    align-items: center;
-    padding-top:10px;
-}
+.order-success{background:#e6f4ea;color:#0f5132;border:1px solid #badbcc;padding:10px 12px;border-radius:6px;margin:8px 16px}
+.empty-cart{padding:24px 16px;color:#666}
 
-.address-input {
-    flex: 1;
-    padding: 8px;
-    margin-right: 10px;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-}
-
-.buy-button {
-    background-color: #4caf50;
-    color: white;
-    border: none;
-    padding: 10px 20px;
-    cursor: pointer;
-    border-radius: 4px;
-}
-
-.buy-button:hover {
-    background-color: #45a049;
-}
+.drawer-loading{position:absolute;inset:auto 0 0 0;padding:12px 16px;display:flex;justify-content:center}
+.spinner{width:32px;height:32px;border:4px solid #ccc;border-top-color:#000;border-radius:50%;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}

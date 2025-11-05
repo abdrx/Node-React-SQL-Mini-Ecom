@@ -9,8 +9,11 @@ const ProductListCustomer = (props) => {
   const [cartProducts, setCartProducts] = useState([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
+  const [buying, setBuying] = useState(false);
+  const [orderSuccess, setOrderSuccess] = useState(false);
   const customerId = sessionStorage.getItem("customerId");
   const [address, setAddress] = useState("");
+  const [cartOpen, setCartOpen] = useState(false);
 
   const fetchProducts = async (q = "") => {
     setLoading(true);
@@ -27,6 +30,20 @@ const ProductListCustomer = (props) => {
     }
   };
 
+  const buildImageSrc = (imageUrl) => {
+    if (!imageUrl) return null;
+    const base = (getBaseURL() || "").replace(/\/$/, "");
+    const path = String(imageUrl).replace(/^\//, "");
+    return `${base}/${path}`;
+  };
+
+  const formatAED = (value) => {
+    const n = Number(value || 0);
+    // Show as "100 AED" (no decimals) per requirement
+    const num = isFinite(n) ? Math.round(n) : 0;
+    return `${num.toLocaleString('en-AE', { maximumFractionDigits: 0 })} AED`;
+  };
+
   useEffect(() => {
     fetchProducts("");
     axios
@@ -39,8 +56,23 @@ const ProductListCustomer = (props) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const cartCount = cartProducts.reduce((sum, item) => sum + (parseInt(item.quantity || 0, 10)), 0);
+
+  const inCartQty = (productId) => {
+    const found = cartProducts.find((p) => p.productId === productId);
+    return found ? parseInt(found.quantity || 0, 10) : 0;
+  };
+
+  const remainingStock = (product) => {
+    const total = parseInt(product.stock || 0, 10);
+    const remaining = Math.max(total - inCartQty(product.productId), 0);
+    return remaining;
+  };
+
   const addToCart = (product) => {
-    if (product.quantity > 0) {
+    const remains = remainingStock(product);
+    const qty = Math.min(parseInt(product.quantity || 0, 10), remains);
+    if (qty > 0) {
       let updatedCartList = [...cartProducts];
       let existingProductIndex = updatedCartList.findIndex(
         (p) => p.productId === product.productId
@@ -48,16 +80,16 @@ const ProductListCustomer = (props) => {
 
       if (existingProductIndex !== -1) {
         updatedCartList[existingProductIndex].quantity =
-          updatedCartList[existingProductIndex].quantity + product.quantity;
+          updatedCartList[existingProductIndex].quantity + qty;
       } else {
-        updatedCartList.push({ ...product });
+        updatedCartList.push({ ...product, quantity: qty });
       }
 
       axios
         .post(`${getBaseURL()}api/cart/add`, {
           customerId,
           productId: product.productId,
-          quantity: product.quantity,
+          quantity: qty,
           isPresent: existingProductIndex !== -1,
         })
         .then(() => {
@@ -89,7 +121,9 @@ const ProductListCustomer = (props) => {
   const updateProductQuantity = (e, productId) => {
     const updatedList = productList.map((product) => {
       if (product.productId === productId) {
-        product.quantity = parseInt(e.target.value || 0, 10);
+        const max = remainingStock(product);
+        const next = Math.max(0, Math.min(parseInt(e.target.value || 0, 10), max));
+        product.quantity = next;
       }
       return product;
     });
@@ -111,6 +145,8 @@ const ProductListCustomer = (props) => {
         },
       };
 
+      setBuying(true);
+      setOrderSuccess(false);
       axios
         .post(
           `${getBaseURL()}api/cart/buy/${customerId}`,
@@ -120,7 +156,7 @@ const ProductListCustomer = (props) => {
         .then(() => {
           setCartProducts([]);
           setAddress("");
-          alert("Order placed successfully");
+          setOrderSuccess(true);
           fetchProducts("");
         })
         .catch((error) => {
@@ -129,7 +165,8 @@ const ProductListCustomer = (props) => {
           } else {
             console.error("Error:", error);
           }
-        });
+        })
+        .finally(() => setBuying(false));
     } else {
       alert("Please enter your address");
     }
@@ -161,14 +198,18 @@ const ProductListCustomer = (props) => {
             >
               Reset
             </button>
+            <button className="cart-btn" onClick={() => setCartOpen(true)}>
+              Cart{cartCount > 0 ? ` (${cartCount})` : ''}
+            </button>
           </div>
         </div>
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
+                <th>Image</th>
                 <th>Name</th>
-                <th>Price</th>
+                <th>Price (AED)</th>
                 <th>Category</th>
                 <th>Stock</th>
                 <th>No. of Items</th>
@@ -183,32 +224,44 @@ const ProductListCustomer = (props) => {
               ) : (
                 productList.map((product) => (
                   <tr key={product.productId}>
+                    <td>
+                      {product.imageUrl ? (
+                        <img
+                          src={buildImageSrc(product.imageUrl)}
+                          alt={product.name}
+                          className="thumb"
+                        />
+                      ) : (
+                        <span className="no-img">No image</span>
+                      )}
+                    </td>
                     <td>{product.name}</td>
-                    <td>{product.price}</td>
+                    <td>{formatAED(product.price)}</td>
                     <td>{product.category || "-"}</td>
                     <td>
-                      {product.stockStatus === "out_of_stock"
+                      {remainingStock(product) <= 0 || product.stockStatus === "out_of_stock"
                         ? "Out of Stock"
-                        : "In Stock"}
+                        : `${remainingStock(product)} available`}
                     </td>
                     <td>
                       <input
                         type="number"
                         value={product.quantity}
                         min="0"
+                        max={remainingStock(product)}
                         placeholder="Quantity"
-                        disabled={product.stockStatus === "out_of_stock"}
+                        disabled={product.stockStatus === "out_of_stock" || remainingStock(product) <= 0}
                         onChange={(e) =>
                           updateProductQuantity(e, product.productId)
                         }
                       />
                     </td>
                     <td>
-                      {product.stockStatus === "out_of_stock" ? (
+                      {product.stockStatus === "out_of_stock" || remainingStock(product) <= 0 ? (
                         <span className="out-of-stock">Out of Stock</span>
                       ) : (
                         <button
-                          disabled={product.quantity <= 0}
+                          disabled={product.quantity <= 0 || product.quantity > remainingStock(product)}
                           onClick={() => {
                             addToCart(product);
                           }}
@@ -225,11 +278,15 @@ const ProductListCustomer = (props) => {
         </div>
       </div>
       <ShoppingCart
+        open={cartOpen}
+        onClose={() => setCartOpen(false)}
         cartProducts={cartProducts}
         removeProduct={removeProduct}
         buyProducts={buyProducts}
-        address={props.address}
+        address={address}
         updateAddress={updateAddress}
+        isBuying={buying}
+        orderSuccess={orderSuccess}
       />
     </>
   );

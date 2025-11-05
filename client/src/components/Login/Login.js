@@ -81,7 +81,7 @@ function Login(props) {
         <h1>Login</h1>
         <div>
           <label>E-Mail</label>
-          <input type="text" value={uname} onChange={changeName}></input>
+          <input type="text" value={uname} onChange={changeName} autoComplete="off" />
         </div>
         <div>
           <label>Password</label>
@@ -89,7 +89,8 @@ function Login(props) {
             type="password"
             value={password}
             onChange={changePass}
-          ></input>
+            autoComplete="new-password"
+          />
         </div>
         {error && <div className="error-message">{error}</div>}
         <div className="actions">

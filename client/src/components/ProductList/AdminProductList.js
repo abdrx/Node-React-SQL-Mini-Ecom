@@ -14,7 +14,7 @@ const ProductList = (props) => {
   const [showAdd, setShowAdd] = useState(false);
   const [error, setError] = useState("");
   const [showEdit, setShowEdit] = useState(false);
-  const [editForm, setEditForm] = useState({ id: null, name: '', price: '', stock: '', category: '', description: '', imageFile: null });
+  const [editForm, setEditForm] = useState({ id: null, name: '', price: '', stock: '', category: '', description: '', imageFile: null, imageUrl: '' });
 
   const addProduct = async (e) => {
     e?.preventDefault();
@@ -50,7 +50,7 @@ const ProductList = (props) => {
   };
 
   const openEdit = (p) => {
-    setEditForm({ id: p.productId, name: p.name || '', price: p.price || '', stock: p.stock || 0, category: p.category || '', description: p.description || '', imageFile: null });
+    setEditForm({ id: p.productId, name: p.name || '', price: p.price || '', stock: p.stock || 0, category: p.category || '', description: p.description || '', imageFile: null, imageUrl: p.imageUrl || '' });
     setShowEdit(true);
   };
 
@@ -98,6 +98,19 @@ const ProductList = (props) => {
       .catch((err) => console.log("Couldn't receive list"));
   };
 
+  const buildImageSrc = (imageUrl) => {
+    if (!imageUrl) return null;
+    const base = (getBaseURL() || "").replace(/\/$/, "");
+    const path = String(imageUrl).replace(/^\//, "");
+    return `${base}/${path}`;
+  };
+
+  const formatAED = (value) => {
+    const n = Number(value || 0);
+    const num = isFinite(n) ? Math.round(n) : 0;
+    return `${num.toLocaleString('en-AE', { maximumFractionDigits: 0 })} AED`;
+  };
+
   return (
     <div className="product-list-container">
       <div className="product-list-header-row">
@@ -108,9 +121,10 @@ const ProductList = (props) => {
         <table>
           <thead>
             <tr>
+              <th>Image</th>
               <th>Id</th>
               <th>Name</th>
-              <th>Price</th>
+                <th>Price (AED)</th>
               <th>Stock</th>
               <th>Status</th>
               <th>Created Date</th>
@@ -123,9 +137,16 @@ const ProductList = (props) => {
             {products.map((product) => {
               return (
                 <tr key={product.productId}>
+                  <td>
+                    {product.imageUrl ? (
+                      <img src={buildImageSrc(product.imageUrl)} alt={product.name} className="thumb" />
+                    ) : (
+                      <span className="no-img">No image</span>
+                    )}
+                  </td>
                   <td>{product.productId}</td>
                   <td>{product.name}</td>
-                  <td>{product.price}</td>
+                  <td>{formatAED(product.price)}</td>
                   <td>{product.stock ?? 0}</td>
                   <td>{product.stockStatus === 'out_of_stock' ? 'Out of Stock' : 'In Stock'}</td>
                   <td>{product.createdDate}</td>
@@ -197,6 +218,9 @@ const ProductList = (props) => {
               <input value={editForm.description} onChange={(e) => setEditForm({ ...editForm, description: e.target.value })} />
               <label>Image</label>
               <input type="file" accept="image/*" onChange={(e) => setEditForm({ ...editForm, imageFile: e.target.files?.[0] || null })} />
+              {editForm.imageUrl && (
+                <img src={buildImageSrc(editForm.imageUrl)} alt={editForm.name} className="thumb" />
+              )}
               <div className="modal-actions">
                 <button type="button" className="btn secondary" onClick={() => setShowEdit(false)}>Cancel</button>
                 <button type="submit" className="btn">Save</button>
