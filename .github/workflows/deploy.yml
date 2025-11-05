@@ -1,0 +1,163 @@
+name: Deploy to EC2 with PM2 (atomic releases)
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    env:
+      APP_NAME: mini-ecom
+      RELEASE_DIR: releases
+      SERVER_SUBDIR: server
+      CLIENT_SUBDIR: client
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node 18.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install & build client
+        working-directory: ${{ env.CLIENT_SUBDIR }}
+        run: |
+          npm ci
+          npm run build
+
+      - name: Package artifact (server + client build)
+        run: |
+          set -e
+          RELEASE_TS=$(date -u +%Y%m%d%H%M%S)
+          echo "RELEASE_TS=$RELEASE_TS" >> $GITHUB_ENV
+
+          mkdir -p deploy_bundle/${{ env.SERVER_SUBDIR }}
+          mkdir -p deploy_bundle/${{ env.CLIENT_SUBDIR }}/build
+
+          # server source
+          rsync -a --exclude=node_modules --exclude=.env --exclude=.git \
+            ${{ env.SERVER_SUBDIR }}/ deploy_bundle/${{ env.SERVER_SUBDIR }}/
+
+          # include PM2 ecosystem file if present
+          if [ -f "${{ env.SERVER_SUBDIR }}/ecosystem.config.js" ]; then
+            cp ${{ env.SERVER_SUBDIR }}/ecosystem.config.js deploy_bundle/${{ env.SERVER_SUBDIR }}/
+          fi
+
+          # client build only (no dev files)
+          rsync -a ${{ env.CLIENT_SUBDIR }}/build/ deploy_bundle/${{ env.CLIENT_SUBDIR }}/build/
+
+          # tar it
+          tar -C deploy_bundle -czf ${{ env.APP_NAME }}-${RELEASE_TS}.tgz .
+          echo "Created: ${{ env.APP_NAME }}-${RELEASE_TS}.tgz"
+          ls -lh ${{ env.APP_NAME }}-${RELEASE_TS}.tgz
+
+      - name: Upload artifact to EC2 (scp)
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "${{ env.APP_NAME }}-${{ env.RELEASE_TS || env.RELEASE_TS }}.tgz"
+          target: "/home/ubuntu/apps/${{ env.APP_NAME }}/tmp"
+        env:
+          RELEASE_TS: ${{ env.RELEASE_TS }}
+
+      - name: Remote deploy on EC2 (atomic symlink + pm2 reload)
+        uses: appleboy/ssh-action@v1.1.0
+        env:
+          APP_NAME: ${{ env.APP_NAME }}
+          RELEASE_DIR: ${{ env.RELEASE_DIR }}
+          SERVER_SUBDIR: ${{ env.SERVER_SUBDIR }}
+          CLIENT_SUBDIR: ${{ env.CLIENT_SUBDIR }}
+          RELEASE_TS: ${{ env.RELEASE_TS }}
+          # Secrets for server .env
+          USE_LOCALHOST: "false"
+          DB_SERVER_HOST: "127.0.0.1"
+          DB_SERVER_USER: ${{ secrets.DB_USER }}
+          DB_SERVER_PASSWORD: ${{ secrets.DB_PASS }}
+          DB_SERVER_DATABASE: ${{ secrets.DB_NAME }}
+          JWT_ACCESS: ${{ secrets.JWT_ACCESS_SECRET }}
+          JWT_REFRESH: ${{ secrets.JWT_REFRESH_SECRET }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -euo pipefail
+
+            APP_ROOT="/home/ubuntu/apps/$APP_NAME"
+            RELEASES="$APP_ROOT/$RELEASE_DIR"
+            SHARED="$APP_ROOT/shared"
+            TMP="$APP_ROOT/tmp"
+            TARBALL="$TMP/$APP_NAME-$RELEASE_TS.tgz"
+            NEW_RELEASE="$RELEASES/$RELEASE_TS"
+
+            mkdir -p "$RELEASES" "$SHARED/env" "$TMP"
+
+            # ensure Node & pm2 exist
+            if ! command -v node >/dev/null 2>&1; then
+              curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+              sudo apt-get install -y nodejs
+            fi
+            if ! command -v pm2 >/dev/null 2>&1; then
+              sudo npm i -g pm2
+            fi
+
+            # extract release
+            mkdir -p "$NEW_RELEASE"
+            tar -C "$NEW_RELEASE" -xzf "$TARBALL"
+
+            # write/refresh server .env in SHARED and link into release
+            cat > "$SHARED/env/server.env" <<EOF
+            USE_LOCALHOST=${USE_LOCALHOST}
+            DB_SERVER_HOST=${DB_SERVER_HOST}
+            DB_SERVER_USER=${DB_SERVER_USER}
+            DB_SERVER_PASSWORD=${DB_SERVER_PASSWORD}
+            DB_SERVER_DATABASE=${DB_SERVER_DATABASE}
+            JWT_SECRET_KEY_ACCESS_TOKEN=${JWT_ACCESS}
+            JWT_SECRET_KEY_REFRESH_TOKEN=${JWT_REFRESH}
+            EOF
+
+            ln -sf "$SHARED/env/server.env" "$NEW_RELEASE/$SERVER_SUBDIR/.env"
+
+            # install server deps inside the new release
+            cd "$NEW_RELEASE/$SERVER_SUBDIR"
+            npm ci --omit=dev || npm install --omit=dev
+
+            # optional: run migrations (adjust to your tool)
+            if [ -f "knexfile.js" ]; then
+              npx knex --knexfile knexfile.js migrate:latest || true
+            fi
+
+            # symlink current -> new release (atomic)
+            ln -sfn "$NEW_RELEASE" "$APP_ROOT/current"
+
+            # start/reload with PM2
+            if [ -f "ecosystem.config.js" ]; then
+              pm2 startOrReload ecosystem.config.js --update-env --only $APP_NAME || pm2 start ecosystem.config.js --only $APP_NAME
+            else
+              # fallback to direct start
+              # adjust entry if not app.js
+              if pm2 describe "$APP_NAME" >/dev/null 2>&1; then
+                pm2 reload "$APP_NAME" --update-env
+              else
+                pm2 start app.js --name "$APP_NAME"
+              fi
+            fi
+            pm2 save
+
+            # publish client build to nginx root (optional)
+            if [ -d "$NEW_RELEASE/$CLIENT_SUBDIR/build" ]; then
+              sudo mkdir -p /var/www/$APP_NAME
+              sudo rsync -a --delete "$NEW_RELEASE/$CLIENT_SUBDIR/build/" /var/www/$APP_NAME/
+              sudo systemctl reload nginx || true
+            fi
+
+            # clean old releases (keep last 5)
+            ls -1 $RELEASES | sort | head -n -5 | xargs -I {} rm -rf "$RELEASES/{}" || true
+
+            echo "✅ Deployed release $RELEASE_TS"
