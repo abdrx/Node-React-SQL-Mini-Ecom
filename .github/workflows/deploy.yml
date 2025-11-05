@@ -3,7 +3,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       APP_NAME: mini-ecom
-      EC2_HOST: "54.246.33.23"   # <-- replace with your EC2 IP/DNS
+      EC2_HOST: "54.246.33.23"   
       SERVER_SUBDIR: server
       CLIENT_SUBDIR: client
       RELEASE_DIR: releases
