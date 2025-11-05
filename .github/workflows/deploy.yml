@@ -1,20 +1,12 @@
-name: Deploy mini-ecom (PM2 + EC2)
-
-on:
-  push:
-    branches: [ main ]
-  workflow_dispatch:
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
       APP_NAME: mini-ecom
-      EC2_HOST: "YOUR.EC2.IP.OR.DNS"   # <- set this
+      EC2_HOST: "54.246.33.23"   # <-- replace with your EC2 IP/DNS
       SERVER_SUBDIR: server
       CLIENT_SUBDIR: client
       RELEASE_DIR: releases
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,49 +15,54 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22.19.0'
-          cache: 'npm'
+          cache: npm
           cache-dependency-path: |
             client/package-lock.json
             server/package-lock.json
 
       - name: Set npm 10.9.3
-        run: npm i -g npm@10.9.3 && npm -v
+        run: npm i -g npm@10.9.3
 
-      # ---- CLIENT BUILD ----
-      - name: Install & build client (ignore warnings)
-        working-directory: ${{ env.CLIENT_SUBDIR }}
+      - name: Build client (ignore warnings)
+        working-directory: client
         env:
-          CI: "false"           # <= prevents warnings from failing build
+          CI: "false"
         run: |
           if [ -f package-lock.json ]; then npm ci; else npm install; fi
           npm run build
 
-      # ---- PACKAGE ARTIFACT ----
       - name: Package server + client build
         id: pkg
         run: |
           set -e
           TS=$(date -u +%Y%m%d%H%M%S)
           echo "ts=$TS" >> $GITHUB_OUTPUT
-          mkdir -p deploy_bundle/${{ env.SERVER_SUBDIR }} deploy_bundle/${{ env.CLIENT_SUBDIR }}/build
-          rsync -a --exclude=node_modules --exclude=.env --exclude=.git ${{ env.SERVER_SUBDIR }}/ deploy_bundle/${{ env.SERVER_SUBDIR }}/
-          rsync -a ${{ env.CLIENT_SUBDIR }}/build/ deploy_bundle/${{ env.CLIENT_SUBDIR }}/build/
+          mkdir -p deploy_bundle/server deploy_bundle/client/build
+          rsync -a --exclude=node_modules --exclude=.env --exclude=.git server/ deploy_bundle/server/
+          rsync -a client/build/ deploy_bundle/client/build/
           TAR="${{ env.APP_NAME }}-$TS.tgz"
           tar -C deploy_bundle -czf "$TAR" .
           echo "tar=$TAR" >> $GITHUB_OUTPUT
-          ls -lh "$TAR"
 
-      # ---- SCP UPLOAD ----
+      # Ensure target dirs exist BEFORE scp
+      - name: Prepare server folders
+        uses: appleboy/ssh-action@v1.1.0
+        with:
+          host: ${{ env.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            mkdir -p /home/ubuntu/apps/${{ env.APP_NAME }}/tmp
+
       - name: Upload to EC2 (scp)
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ env.EC2_HOST }}
           username: ubuntu
-          key: ${{ secrets.SSH_PRIVATE_KEY }}   # put PEM contents here as a secret
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           source: "${{ steps.pkg.outputs.tar }}"
           target: "/home/ubuntu/apps/${{ env.APP_NAME }}/tmp"
 
-      # ---- REMOTE DEPLOY ----
       - name: Remote deploy (ssh)
         uses: appleboy/ssh-action@v1.1.0
         with:
@@ -82,9 +79,8 @@ jobs:
             TAR="$TMP/$APP-$TS.tgz"
             NEW="$RELS/$TS"
 
-            mkdir -p "$RELS" "$TMP"
+            mkdir -p "$RELS"
 
-            # Ensure Node & PM2
             if ! command -v node >/dev/null 2>&1; then
               curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
               sudo apt-get install -y nodejs
@@ -94,8 +90,7 @@ jobs:
             mkdir -p "$NEW"
             tar -C "$NEW" -xzf "$TAR"
 
-            # Write server .env (DB password empty as requested)
-            cat > "$NEW/${{ env.SERVER_SUBDIR }}/.env" <<'ENV'
+            cat > "$NEW/server/.env" <<'ENV'
             DB_HOST=127.0.0.1
             DB_PORT=3306
             DB_NAME=appdb
@@ -105,14 +100,11 @@ jobs:
             PORT=3000
             ENV
 
-            # Install server deps
-            cd "$NEW/${{ env.SERVER_SUBDIR }}"
+            cd "$NEW/server"
             if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi
 
-            # Switch current
             ln -sfn "$NEW" "$ROOT/current"
 
-            # Start/reload with PM2
             if [ -f ecosystem.config.js ]; then
               pm2 startOrReload ecosystem.config.js --update-env --only "$APP" || pm2 start ecosystem.config.js --only "$APP"
             else
@@ -124,14 +116,12 @@ jobs:
             fi
             pm2 save
 
-            # Publish client build to nginx (optional)
-            if [ -d "$NEW/${{ env.CLIENT_SUBDIR }}/build" ]; then
+            if [ -d "$NEW/client/build" ]; then
               sudo mkdir -p /var/www/$APP
-              sudo rsync -a --delete "$NEW/${{ env.CLIENT_SUBDIR }}/build/" /var/www/$APP/
+              sudo rsync -a --delete "$NEW/client/build/" /var/www/$APP/
               sudo systemctl reload nginx || true
             fi
 
-            # Keep last 5 releases
             ls -1 "$RELS" | sort | head -n -5 | xargs -I {} rm -rf "$RELS/{}" || true
 
             echo "✅ Deployed $TS"
