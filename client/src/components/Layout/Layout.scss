@@ -1,0 +1,18 @@
+.me-container{max-width:1200px;margin:0 auto;padding:0 16px}
+.me-header{background:#fff;color:#000;border-bottom:1px solid #eee}
+.me-header .me-container{display:flex;align-items:center;min-height:56px}
+.me-header .me-header-row{display:flex;align-items:center;justify-content:space-between}
+.me-header h1{font-size:18px;margin:0}
+.me-header .me-header-actions{display:flex;gap:8px}
+.me-logo{font-weight:700}
+.me-footer{margin-top:auto;background:#fff;color:#000;border-top:1px solid #eee}
+.me-footer .me-container{display:flex;align-items:center;min-height:56px}
+/* buttons */
+.me-btn{background:#000;color:#fff;border:1px solid #000;border-radius:6px;padding:8px 12px;cursor:pointer}
+.me-btn:hover{opacity:.9}
+.me-secondary{background:#fff;color:#000}
+
+@media (max-width:600px){
+  .me-header .me-container,.me-footer .me-container{min-height:48px}
+  .me-header h1{font-size:16px}
+}

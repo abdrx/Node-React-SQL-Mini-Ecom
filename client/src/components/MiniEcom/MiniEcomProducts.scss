@@ -1,0 +1,27 @@
+.me-page{display:flex;min-height:100vh;flex-direction:column}
+.me-container{max-width:1200px;margin:0 auto;padding:16px}
+
+.me-controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:16px 0}
+.me-input{width:100%;max-width:400px;padding:10px;border:1px solid #ddd;border-radius:6px}
+.me-btn{background:#111;color:#fff;border:none;border-radius:6px;padding:10px 16px;cursor:pointer}
+.me-btn:hover{opacity:.9}
+.me-secondary{background:#fff;color:#111;border:1px solid #111}
+
+.me-grid{display:grid;grid-template-columns:1fr 2fr;gap:16px}
+.me-card{background:#fff;border:1px solid #eee;border-radius:8px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+.me-card-title{margin:0 0 12px;font-size:18px}
+.me-form{display:grid;gap:12px}
+.me-form label{display:grid;gap:6px}
+.me-error{color:#b71c1c;background:#fdecea;border:1px solid #f5c6cb;padding:8px;border-radius:6px;margin-bottom:8px}
+
+.me-table-wrap{overflow:auto}
+.me-table{width:100%;border-collapse:collapse}
+.me-table th,.me-table td{border-bottom:1px solid #eee;text-align:left;padding:8px}
+
+@media (max-width:900px){
+  .me-grid{grid-template-columns:1fr}
+}
+
+/* Simple modal */
+.me-modal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:16px}
+.me-modal-card{background:#fff;color:#000;max-width:640px;width:100%;border-radius:8px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.2)}

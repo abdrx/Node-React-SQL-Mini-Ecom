@@ -1,0 +1,32 @@
+// login-Register.scss
+.login-Register-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+
+    .form-container {
+        max-width: 400px;
+        width: 100%;
+        padding: 20px;
+        border: 1px solid #ccc;
+        border-radius: 5px;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+
+        .logo-text {margin-bottom:20px;text-align:center;font-weight:700;font-size:18px;color:#000}
+
+        // Styling for switching between login and register
+        .switch-link {
+            display: block;
+            text-align: center;
+            margin-top: 20px;
+            color: #000;
+            text-decoration: underline;
+            cursor: pointer;
+
+            &:hover {
+                color: #222;
+            }
+        }
+    }
+}
