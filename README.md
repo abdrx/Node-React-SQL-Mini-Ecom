@@ -1,3 +1,104 @@
+# Mini eCommerce – Setup & Run (Quick Start)
+
+This section shows exactly how to create the database, configure environment variables, run migrations, and start both the backend (Node/Express) and frontend (React).
+
+## Prerequisites
+
+- Node.js LTS and npm
+- MySQL (XAMPP or native install)
+
+## 1) Create the database
+
+The app expects a database named `miniecom` using the default XAMPP credentials (user `root`, empty password).
+
+Choose one:
+
+- MySQL CLI
+    ```sql
+    CREATE DATABASE miniecom CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+    ```
+- phpMyAdmin (XAMPP)
+    1. Open http://localhost/phpmyadmin
+    2. Click “Databases” → Create database `miniecom`
+    3. Set collation to utf8mb4_unicode_ci → Create
+
+You do NOT need to run `database/createTables.sql` manually—migrations will create/update tables.
+
+## 2) Configure the backend (server/.env)
+
+Create `server/.env` with:
+
+```env
+USE_LOCALHOST=true
+
+# JWT secrets (use long random values)
+JWT_SECRET_KEY_ACCESS_TOKEN=replace_with_a_random_long_string
+JWT_SECRET_KEY_REFRESH_TOKEN=replace_with_a_different_random_long_string
+
+# For non-local DBs set USE_LOCALHOST=false and configure below
+# DB_SERVER_HOST=your-mysql-host
+# DB_SERVER_USER=your-user
+# DB_SERVER_PASSWORD=your-password
+# DB_SERVER_DATABASE=miniecom
+```
+
+## 3) Install dependencies
+
+```bash
+# Backend
+cd server
+npm install
+
+# Frontend
+cd ../client
+npm install
+```
+
+## 4) Run DB migrations (recommended)
+
+```bash
+cd server
+npm run migrate
+```
+
+This creates/updates tables (`users`, `product`, `orders`, `shopingCart`, `productsInOrder`) and product fields (`category`, `stockStatus`, `stock`, `imageUrl`). Migrations also run automatically on server start.
+
+## 5) Start the backend
+
+```bash
+cd server
+npm run start
+```
+
+- API: http://localhost:3001/
+- Static images: http://localhost:3001/uploads/
+
+If port 3001 is busy:
+
+```bash
+lsof -n -iTCP:3001 -sTCP:LISTEN -P
+kill -9 <PID>
+```
+
+## 6) Start the frontend
+
+Optionally create `client/.env` (defaults to http://localhost:3001/):
+
+```env
+REACT_APP_API_URL=http://localhost:3001/
+```
+
+Run the app:
+
+```bash
+cd client
+npm start
+```
+
+- Frontend: http://localhost:3000/
+
+---
+
 # Mini eCommerce Product Listing Module
 
 This repository implements the assignment: a mini eCommerce product listing module with a simple React front‑end, a Node.js/Express back‑end, MySQL storage, and AWS deployment guidance.
