@@ -66,13 +66,20 @@ exports.buy = (req, res) => {
                     res.send(result);
                 })
                 .catch(err => {
-                    console.error(err.message);
-                    res.status(500).send("Error removing product from cart.");
+                    const msg = (err && err.message) || String(err);
+                    if (msg && msg.toLowerCase().includes('insufficient stock')) {
+                        return res.status(409).json({ error: 'INSUFFICIENT_STOCK', message: 'Insufficient stock for one or more items' });
+                    }
+                    console.error('Buy failed:', msg);
+                    res.status(500).json({ error: 'BUY_FAILED' });
                 });
         })
         .catch(err => {
             // Token verification failed
-            console.error('Token verification failed:', err);
-            return res.status(401).send('Unauthorized: Invalid token');
+            if (err && err.name === 'TokenExpiredError') {
+                return res.status(401).json({ error: 'TOKEN_EXPIRED' });
+            }
+            console.error('Token verification failed:', err && err.message ? err.message : err);
+            return res.status(401).json({ error: 'UNAUTHORIZED' });
         });
 };

@@ -198,84 +198,68 @@ const ProductListCustomer = (props) => {
             >
               Reset
             </button>
-            <button className="cart-btn" onClick={() => setCartOpen(true)}>
-              Cart{cartCount > 0 ? ` (${cartCount})` : ''}
+            <button className="cart-btn" onClick={() => setCartOpen(true)} aria-label={`Open cart with ${cartCount} items`}>
+              <svg className="cart-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M7 4h-2l-1 2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h10v-2h-10l1.1-2h6.45c.75 0 1.41-.41 1.75-1.03l3.58-6.49c.08-.14.12-.31.12-.48 0-.55-.45-1-1-1h-14zm0 16c-1.1 0-1.99.9-1.99 2s.89 2 1.99 2 2-.9 2-2-.9-2-2-2zm12 0c-1.1 0-1.99.9-1.99 2s.89 2 1.99 2 2-.9 2-2-.9-2-2-2z"/>
+              </svg>
+              {cartCount > 0 && <span className="cart-badge">{cartCount}</span>}
             </button>
           </div>
         </div>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Image</th>
-                <th>Name</th>
-                <th>Price (AED)</th>
-                <th>Category</th>
-                <th>Stock</th>
-                <th>No. of Items</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan="6">Loading...</td>
-                </tr>
-              ) : (
-                productList.map((product) => (
-                  <tr key={product.productId}>
-                    <td>
-                      {product.imageUrl ? (
-                        <img
-                          src={buildImageSrc(product.imageUrl)}
-                          alt={product.name}
-                          className="thumb"
-                        />
-                      ) : (
-                        <span className="no-img">No image</span>
-                      )}
-                    </td>
-                    <td>{product.name}</td>
-                    <td>{formatAED(product.price)}</td>
-                    <td>{product.category || "-"}</td>
-                    <td>
-                      {remainingStock(product) <= 0 || product.stockStatus === "out_of_stock"
-                        ? "Out of Stock"
-                        : `${remainingStock(product)} available`}
-                    </td>
-                    <td>
+        {loading ? (
+          <div className="loading-row">Loading...</div>
+        ) : (
+          <div className="product-grid">
+            {productList.map((product) => {
+              const stockLeft = remainingStock(product);
+              const out = product.stockStatus === "out_of_stock" || stockLeft <= 0;
+              return (
+                <div className="product-card" key={product.productId}>
+                  <div className="card-media">
+                    {product.imageUrl ? (
+                      <img src={buildImageSrc(product.imageUrl)} alt={product.name} />
+                    ) : (
+                      <div className="img-placeholder">No image</div>
+                    )}
+                  </div>
+                  <div className="card-body">
+                    <h2 className="title">{product.name}</h2>
+                    <div className="price">{formatAED(product.price)}</div>
+                    <div className="meta">{product.category || "–"}</div>
+                    {product.description && (
+                      <p className="desc">{product.description}</p>
+                    )}
+                    <div className="stock">
+                      {out ? "Out of Stock" : `${stockLeft} available`}
+                    </div>
+                    <div className="actions">
                       <input
                         type="number"
                         value={product.quantity}
                         min="0"
-                        max={remainingStock(product)}
-                        placeholder="Quantity"
-                        disabled={product.stockStatus === "out_of_stock" || remainingStock(product) <= 0}
-                        onChange={(e) =>
-                          updateProductQuantity(e, product.productId)
-                        }
+                        max={stockLeft}
+                        placeholder="Qty"
+                        disabled={out}
+                        onChange={(e) => updateProductQuantity(e, product.productId)}
                       />
-                    </td>
-                    <td>
-                      {product.stockStatus === "out_of_stock" || remainingStock(product) <= 0 ? (
-                        <span className="out-of-stock">Out of Stock</span>
+                      {out ? (
+                        <button className="btn out" disabled>Out of Stock</button>
                       ) : (
                         <button
-                          disabled={product.quantity <= 0 || product.quantity > remainingStock(product)}
-                          onClick={() => {
-                            addToCart(product);
-                          }}
+                          className="btn add"
+                          disabled={product.quantity <= 0 || product.quantity > stockLeft}
+                          onClick={() => addToCart(product)}
                         >
                           Add to Cart
                         </button>
                       )}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
       <ShoppingCart
         open={cartOpen}

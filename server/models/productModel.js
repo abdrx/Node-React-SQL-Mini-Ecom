@@ -104,12 +104,36 @@ exports.updateProduct = (productId, name, price, description, category, stockSta
 
 exports.deleteProduct = (productId) => {
     return new Promise((resolve, reject) => {
-        pool.query("DELETE FROM product WHERE productId = ?", [productId], (err, result) => {
-            if (err) {
-                reject(err);
-            } else {
-                resolve(result);
-            }
+        pool.beginTransaction((err) => {
+            if (err) return reject(err);
+
+            // 1) Remove product from any active shopping carts
+            pool.query("DELETE FROM shopingCart WHERE productId = ?", [productId], (err) => {
+                if (err) {
+                    return pool.rollback(() => reject(err));
+                }
+
+                // 2) Remove product lines from historical orders (productsInOrder)
+                pool.query("DELETE FROM productsInOrder WHERE productId = ?", [productId], (err) => {
+                    if (err) {
+                        return pool.rollback(() => reject(err));
+                    }
+
+                    // 3) Delete the product itself
+                    pool.query("DELETE FROM product WHERE productId = ?", [productId], (err, result) => {
+                        if (err) {
+                            return pool.rollback(() => reject(err));
+                        }
+
+                        pool.commit((err) => {
+                            if (err) {
+                                return pool.rollback(() => reject(err));
+                            }
+                            resolve(result);
+                        });
+                    });
+                });
+            });
         });
     });
 };

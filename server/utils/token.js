@@ -7,9 +7,10 @@ const JWT_SECRET_KEY_REFRESH_TOKEN = process.env.JWT_SECRET_KEY_REFRESH_TOKEN;
 
 // Generate JWT token
 exports.generateAccessAndRefreshToken = (payload) => {
-    let token = jwt.sign(payload, JWT_SECRET_KEY_ACCESS_TOKEN, { expiresIn: '3m' }); // Token expires in 1 hour
-    let refreshToken = jwt.sign(payload, JWT_SECRET_KEY_REFRESH_TOKEN, { expiresIn: '3m' });
-    return {token, refreshToken}
+    // More practical expiries: access 1h, refresh 7d
+    const token = jwt.sign(payload, JWT_SECRET_KEY_ACCESS_TOKEN, { expiresIn: '1h' });
+    const refreshToken = jwt.sign(payload, JWT_SECRET_KEY_REFRESH_TOKEN, { expiresIn: '7d' });
+    return { token, refreshToken };
 };
 
 
