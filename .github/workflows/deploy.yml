@@ -1,4 +1,4 @@
-name: Deploy mini-ecom (upload raw folders; build on EC2)
+name: Deploy mini-ecom (raw upload; build on EC2)
 
 on:
   push:
@@ -9,27 +9,16 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
+      EC2_HOST: "54.246.33.23"
       APP_NAME: mini-ecom
-      EC2_HOST: "54.246.33.23"     # your EC2 public IP
+      APP_ROOT: /home/ubuntu/apps/mini-ecom
       SERVER_SUBDIR: server
       CLIENT_SUBDIR: client
-      APP_ROOT: /home/ubuntu/apps/mini-ecom
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Use Node 22.19.0 and npm 10.9.3 (runner only for tooling)
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22.19.0'
-          cache: 'npm'
-          cache-dependency-path: |
-            client/package-lock.json
-            server/package-lock.json
-      - run: npm i -g npm@10.9.3
-
-      # Ensure remote folders exist before upload
       - name: Prepare folders on EC2
         uses: appleboy/ssh-action@v1.1.0
         with:
@@ -41,8 +30,7 @@ jobs:
             mkdir -p ${{ env.APP_ROOT }}/current/${{ env.SERVER_SUBDIR }}
             mkdir -p ${{ env.APP_ROOT }}/current/${{ env.CLIENT_SUBDIR }}
 
-      # Upload raw server files (excluding node_modules/.git)
-      - name: Upload server folder
+      - name: Upload server (raw)
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ env.EC2_HOST }}
@@ -52,8 +40,7 @@ jobs:
           target: "${{ env.APP_ROOT }}/current/server"
           overwrite: true
 
-      # Upload raw client files (excluding node_modules/.git)
-      - name: Upload client folder
+      - name: Upload client (raw)
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ env.EC2_HOST }}
@@ -63,8 +50,7 @@ jobs:
           target: "${{ env.APP_ROOT }}/current/client"
           overwrite: true
 
-      # Remote build + run: server with PM2, client build + nginx
-      - name: Remote deploy (build on EC2; PM2 + nginx)
+      - name: Build & run on EC2 (PM2 + Nginx)
         uses: appleboy/ssh-action@v1.1.0
         with:
           host: ${{ env.EC2_HOST }}
@@ -77,15 +63,15 @@ jobs:
             SERVER="$ROOT/${{ env.SERVER_SUBDIR }}"
             CLIENT="$ROOT/${{ env.CLIENT_SUBDIR }}"
 
-            # Ensure Node 22.x + npm 10.9.3
+            # Node 22 + npm 10.9 + pm2
             if ! command -v node >/dev/null 2>&1 || [ "$(node -v | cut -d. -f1)" != "v22" ]; then
               curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
               sudo apt-get install -y nodejs
             fi
-            sudo npm i -g npm@10.9.3
-            command -v pm2 >/dev/null 2>&1 || sudo npm i -g pm2
+            sudo npm -g i npm@10.9.3
+            command -v pm2 >/dev/null 2>&1 || sudo npm -g i pm2
 
-            # --------- SERVER (.env + deps + PM2) ----------
+            # --- SERVER ---
             cat > "$SERVER/.env" <<'ENV'
             DB_HOST=127.0.0.1
             DB_PORT=3306
@@ -97,9 +83,8 @@ jobs:
             ENV
 
             cd "$SERVER"
-            if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi
+            if [ -f package-lock.json ]; then npm ci --omit=dev; else npm i --omit=dev; fi
 
-            # Start / reload with PM2 (entry file "app.js" by default)
             if [ -f ecosystem.config.js ]; then
               pm2 startOrReload ecosystem.config.js --update-env --only "$APP_NAME" || pm2 start ecosystem.config.js --only "$APP_NAME"
             else
@@ -111,68 +96,58 @@ jobs:
             fi
             pm2 save
 
-            # --------- CLIENT (set API base -> /api; build) ----------
-            # Support both CRA and Vite env names; the build uses whichever matches your tooling
-            # CRA: REACT_APP_API_BASE ; Vite: VITE_API_BASE
+            # --- CLIENT (build on EC2) ---
             echo "REACT_APP_API_BASE=/api" > "$CLIENT/.env.production"
-            echo "VITE_API_BASE=/api" >> "$CLIENT/.env.production"
+            echo "VITE_API_BASE=/api"     >> "$CLIENT/.env.production"
 
             cd "$CLIENT"
-            # Build on EC2; ignore eslint warnings failing build in CI
             export CI=false
-            if [ -f package-lock.json ]; then npm ci; else npm install; fi
-            if npm run | grep -q "build"; then
-              npm run build
+            if [ -f package.json ]; then
+              if [ -f package-lock.json ]; then npm ci; else npm i; fi
+              if npm run | grep -q "^  build"; then npm run build; fi
             else
-              echo "No build script in client/package.json; skipping build."
+              echo "No client/package.json found; skipping client build."
             fi
 
-            # --------- NGINX (serve static, proxy /api -> Node) ----------
+            # --- NGINX (serve / + proxy /api -> 127.0.0.1:3000) ---
             if ! dpkg -s nginx >/dev/null 2>&1; then
-              sudo apt-get update -y
-              sudo apt-get install -y nginx
+              sudo apt-get update -y && sudo apt-get install -y nginx
             fi
 
-            # Publish React build
-            if [ -d "$CLIENT/build" ]; then
+            BUILD_DIR="$CLIENT/build"
+            if [ -d "$BUILD_DIR" ]; then
               sudo mkdir -p /var/www/$APP_NAME
-              sudo rsync -a --delete "$CLIENT/build/" "/var/www/$APP_NAME/"
+              sudo rsync -a --delete "$BUILD_DIR/" /var/www/$APP_NAME/
             fi
 
-            # Write nginx site (idempotent)
             sudo tee /etc/nginx/sites-available/$APP_NAME.conf >/dev/null <<NGINX
             server {
-                listen 80;
-                server_name _;
+              listen 80;
+              server_name _;
 
-                root /var/www/$APP_NAME;
-                index index.html;
+              root /var/www/$APP_NAME;
+              index index.html;
 
-                location / {
-                    try_files \$uri \$uri/ /index.html;
-                }
+              location / {
+                try_files \$uri \$uri/ /index.html;
+              }
 
-                location /api/ {
-                    proxy_pass         http://127.0.0.1:3000/;
-                    proxy_http_version 1.1;
-                    proxy_set_header   Host              \$host;
-                    proxy_set_header   X-Real-IP         \$remote_addr;
-                    proxy_set_header   X-Forwarded-For   \$proxy_add_x_forwarded_for;
-                    proxy_set_header   X-Forwarded-Proto \$scheme;
-                    proxy_set_header   Upgrade           \$http_upgrade;
-                    proxy_set_header   Connection        "upgrade";
-                }
-
-                gzip on;
-                gzip_types text/plain text/css application/javascript application/json image/svg+xml;
-                gzip_min_length 1024;
+              location /api/ {
+                proxy_pass http://127.0.0.1:3000/;
+                proxy_http_version 1.1;
+                proxy_set_header Host \$host;
+                proxy_set_header X-Real-IP \$remote_addr;
+                proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto \$scheme;
+                proxy_set_header Upgrade \$http_upgrade;
+                proxy_set_header Connection "upgrade";
+              }
             }
             NGINX
+                        sudo ln -sf /etc/nginx/sites-available/$APP_NAME.conf /etc/nginx/sites-enabled/$APP_NAME.conf
+                        sudo rm -f /etc/nginx/sites-enabled/default || true
+                        sudo nginx -t
+                        sudo systemctl enable --now nginx
+                        sudo systemctl reload nginx || true
 
-            sudo ln -sf /etc/nginx/sites-available/$APP_NAME.conf /etc/nginx/sites-enabled/$APP_NAME.conf
-            sudo rm -f /etc/nginx/sites-enabled/default || true
-            sudo nginx -t
-            sudo systemctl enable --now nginx
-            sudo systemctl reload nginx || true
-
-            echo "✅ Deployed (raw upload; built on EC2). Frontend calls /api -> Node@3000."
+                        echo "✅ Deploy done (current/ path)."
