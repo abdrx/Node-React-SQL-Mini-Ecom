@@ -1,4 +1,4 @@
-name: Deploy mini-ecom (PM2 + EC2)
+name: Deploy mini-ecom (upload raw folders; build on EC2)
 
 on:
   push:
@@ -10,54 +10,26 @@ jobs:
     runs-on: ubuntu-latest
     env:
       APP_NAME: mini-ecom
-      EC2_HOST: "54.246.33.23"     # <- your EC2 public IP
+      EC2_HOST: "54.246.33.23"     # your EC2 public IP
       SERVER_SUBDIR: server
       CLIENT_SUBDIR: client
-      RELEASE_DIR: releases
+      APP_ROOT: /home/ubuntu/apps/mini-ecom
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Use Node 22.19.0
+      - name: Use Node 22.19.0 and npm 10.9.3 (runner only for tooling)
         uses: actions/setup-node@v4
         with:
           node-version: '22.19.0'
-          cache: npm
+          cache: 'npm'
           cache-dependency-path: |
             client/package-lock.json
             server/package-lock.json
+      - run: npm i -g npm@10.9.3
 
-      - name: Set npm 10.9.3
-        run: npm i -g npm@10.9.3 && npm -v
-
-      # --- CLIENT BUILD ---
-      - name: Install & build client (ignore warnings)
-        working-directory: ${{ env.CLIENT_SUBDIR }}
-        env:
-          CI: "false"
-        run: |
-          if [ -f package-lock.json ]; then npm ci; else npm install; fi
-          npm run build
-
-      # --- PACKAGE ARTIFACT ---
-      - name: Package server + client build
-        id: pkg
-        run: |
-          set -e
-          TS=$(date -u +%Y%m%d%H%M%S)
-          echo "ts=$TS" >> "$GITHUB_OUTPUT"
-
-          mkdir -p deploy_bundle/${{ env.SERVER_SUBDIR }} deploy_bundle/${{ env.CLIENT_SUBDIR }}/build
-          rsync -a --exclude=node_modules --exclude=.env --exclude=.git ${{ env.SERVER_SUBDIR }}/ deploy_bundle/${{ env.SERVER_SUBDIR }}/
-          rsync -a ${{ env.CLIENT_SUBDIR }}/build/ deploy_bundle/${{ env.CLIENT_SUBDIR }}/build/
-
-          TAR="${{ env.APP_NAME }}-$TS.tgz"
-          tar -C deploy_bundle -czf "$TAR" .
-          echo "tar=$TAR" >> "$GITHUB_OUTPUT"
-          ls -lh "$TAR"
-
-      # --- ENSURE REMOTE FOLDERS EXIST ---
+      # Ensure remote folders exist before upload
       - name: Prepare folders on EC2
         uses: appleboy/ssh-action@v1.1.0
         with:
@@ -65,21 +37,34 @@ jobs:
           username: ubuntu
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            mkdir -p /home/ubuntu/apps/${{ env.APP_NAME }}/tmp
-            mkdir -p /home/ubuntu/apps/${{ env.APP_NAME }}/${{ env.RELEASE_DIR }}
+            set -e
+            mkdir -p ${{ env.APP_ROOT }}/current/${{ env.SERVER_SUBDIR }}
+            mkdir -p ${{ env.APP_ROOT }}/current/${{ env.CLIENT_SUBDIR }}
 
-      # --- SCP TAR TO EC2 ---
-      - name: Upload to EC2 (scp)
+      # Upload raw server files (excluding node_modules/.git)
+      - name: Upload server folder
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ env.EC2_HOST }}
           username: ubuntu
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: "${{ steps.pkg.outputs.tar }}"
-          target: "/home/ubuntu/apps/${{ env.APP_NAME }}/tmp"
+          source: "server/**"
+          target: "${{ env.APP_ROOT }}/current/server"
+          overwrite: true
 
-      # --- REMOTE DEPLOY ---
-      - name: Remote deploy (pm2 + atomic symlink)
+      # Upload raw client files (excluding node_modules/.git)
+      - name: Upload client folder
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ env.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "client/**"
+          target: "${{ env.APP_ROOT }}/current/client"
+          overwrite: true
+
+      # Remote build + run: server with PM2, client build + nginx
+      - name: Remote deploy (build on EC2; PM2 + nginx)
         uses: appleboy/ssh-action@v1.1.0
         with:
           host: ${{ env.EC2_HOST }}
@@ -87,27 +72,21 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             set -euo pipefail
-            APP="${{ env.APP_NAME }}"
-            ROOT="/home/ubuntu/apps/$APP"
-            RELS="$ROOT/${{ env.RELEASE_DIR }}"
-            TMP="$ROOT/tmp"
-            TS="${{ steps.pkg.outputs.ts }}"
-            TAR="$TMP/$APP-$TS.tgz"
-            NEW="$RELS/$TS"
+            APP_NAME="${{ env.APP_NAME }}"
+            ROOT="${{ env.APP_ROOT }}/current"
+            SERVER="$ROOT/${{ env.SERVER_SUBDIR }}"
+            CLIENT="$ROOT/${{ env.CLIENT_SUBDIR }}"
 
-            # Ensure Node & PM2 are installed
-            if ! command -v node >/dev/null 2>&1; then
+            # Ensure Node 22.x + npm 10.9.3
+            if ! command -v node >/dev/null 2>&1 || [ "$(node -v | cut -d. -f1)" != "v22" ]; then
               curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
               sudo apt-get install -y nodejs
             fi
+            sudo npm i -g npm@10.9.3
             command -v pm2 >/dev/null 2>&1 || sudo npm i -g pm2
 
-            # Unpack new release
-            mkdir -p "$NEW"
-            tar -C "$NEW" -xzf "$TAR"
-
-            # Write server .env (DB password empty)
-            cat > "$NEW/${{ env.SERVER_SUBDIR }}/.env" <<'ENV'
+            # --------- SERVER (.env + deps + PM2) ----------
+            cat > "$SERVER/.env" <<'ENV'
             DB_HOST=127.0.0.1
             DB_PORT=3306
             DB_NAME=appdb
@@ -117,33 +96,83 @@ jobs:
             PORT=3000
             ENV
 
-            # Install server deps
-            cd "$NEW/${{ env.SERVER_SUBDIR }}"
+            cd "$SERVER"
             if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi
 
-            # Switch symlink atomically
-            ln -sfn "$NEW" "$ROOT/current"
-
-            # Start / reload with PM2
-            if [ -f "ecosystem.config.js" ]; then
-              pm2 startOrReload ecosystem.config.js --update-env --only "$APP" || pm2 start ecosystem.config.js --only "$APP"
+            # Start / reload with PM2 (entry file "app.js" by default)
+            if [ -f ecosystem.config.js ]; then
+              pm2 startOrReload ecosystem.config.js --update-env --only "$APP_NAME" || pm2 start ecosystem.config.js --only "$APP_NAME"
             else
-              if pm2 describe "$APP" >/dev/null 2>&1; then
-                pm2 reload "$APP" --update-env
+              if pm2 describe "$APP_NAME" >/dev/null 2>&1; then
+                pm2 reload "$APP_NAME" --update-env
               else
-                pm2 start app.js --name "$APP"
+                pm2 start app.js --name "$APP_NAME"
               fi
             fi
             pm2 save
 
-            # Publish client build (optional, needs nginx)
-            if [ -d "$NEW/${{ env.CLIENT_SUBDIR }}/build" ]; then
-              sudo mkdir -p /var/www/$APP
-              sudo rsync -a --delete "$NEW/${{ env.CLIENT_SUBDIR }}/build/" /var/www/$APP/
-              sudo systemctl reload nginx || true
+            # --------- CLIENT (set API base -> /api; build) ----------
+            # Support both CRA and Vite env names; the build uses whichever matches your tooling
+            # CRA: REACT_APP_API_BASE ; Vite: VITE_API_BASE
+            echo "REACT_APP_API_BASE=/api" > "$CLIENT/.env.production"
+            echo "VITE_API_BASE=/api" >> "$CLIENT/.env.production"
+
+            cd "$CLIENT"
+            # Build on EC2; ignore eslint warnings failing build in CI
+            export CI=false
+            if [ -f package-lock.json ]; then npm ci; else npm install; fi
+            if npm run | grep -q "build"; then
+              npm run build
+            else
+              echo "No build script in client/package.json; skipping build."
             fi
 
-            # Keep last 5 releases
-            ls -1 "$RELS" | sort | head -n -5 | xargs -I {} rm -rf "$RELS/{}" || true
+            # --------- NGINX (serve static, proxy /api -> Node) ----------
+            if ! dpkg -s nginx >/dev/null 2>&1; then
+              sudo apt-get update -y
+              sudo apt-get install -y nginx
+            fi
 
-            echo "✅ Deployed $TS"
+            # Publish React build
+            if [ -d "$CLIENT/build" ]; then
+              sudo mkdir -p /var/www/$APP_NAME
+              sudo rsync -a --delete "$CLIENT/build/" "/var/www/$APP_NAME/"
+            fi
+
+            # Write nginx site (idempotent)
+            sudo tee /etc/nginx/sites-available/$APP_NAME.conf >/dev/null <<NGINX
+            server {
+                listen 80;
+                server_name _;
+
+                root /var/www/$APP_NAME;
+                index index.html;
+
+                location / {
+                    try_files \$uri \$uri/ /index.html;
+                }
+
+                location /api/ {
+                    proxy_pass         http://127.0.0.1:3000/;
+                    proxy_http_version 1.1;
+                    proxy_set_header   Host              \$host;
+                    proxy_set_header   X-Real-IP         \$remote_addr;
+                    proxy_set_header   X-Forwarded-For   \$proxy_add_x_forwarded_for;
+                    proxy_set_header   X-Forwarded-Proto \$scheme;
+                    proxy_set_header   Upgrade           \$http_upgrade;
+                    proxy_set_header   Connection        "upgrade";
+                }
+
+                gzip on;
+                gzip_types text/plain text/css application/javascript application/json image/svg+xml;
+                gzip_min_length 1024;
+            }
+            NGINX
+
+            sudo ln -sf /etc/nginx/sites-available/$APP_NAME.conf /etc/nginx/sites-enabled/$APP_NAME.conf
+            sudo rm -f /etc/nginx/sites-enabled/default || true
+            sudo nginx -t
+            sudo systemctl enable --now nginx
+            sudo systemctl reload nginx || true
+
+            echo "✅ Deployed (raw upload; built on EC2). Frontend calls /api -> Node@3000."
