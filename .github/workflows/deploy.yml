@@ -1,4 +1,4 @@
-name: Deploy mini-ecom (raw upload; build on EC2)
+name: Deploy mini-ecom (clean replace)
 
 on:
   push:
@@ -12,14 +12,25 @@ jobs:
       EC2_HOST: "54.246.33.23"
       APP_NAME: mini-ecom
       APP_ROOT: /home/ubuntu/apps/mini-ecom
-      SERVER_SUBDIR: server
-      CLIENT_SUBDIR: client
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Prepare folders on EC2
+      # Create a small tarball containing only /server and /client (no node_modules, no .git)
+      - name: Pack server+client (no build)
+        id: pack
+        run: |
+          set -e
+          test -d server || (echo "Missing server/ folder" && exit 1)
+          test -d client || (echo "Missing client/ folder" && exit 1)
+          TAR="${{ env.APP_NAME }}.tgz"
+          tar --exclude='**/node_modules' --exclude='.git' -czf "$TAR" server client
+          echo "tar=$TAR" >> "$GITHUB_OUTPUT"
+          ls -lh "$TAR"
+
+      # Ensure target tmp dir exists
+      - name: Prepare folder on EC2
         uses: appleboy/ssh-action@v1.1.0
         with:
           host: ${{ env.EC2_HOST }}
@@ -27,30 +38,24 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             set -e
-            mkdir -p ${{ env.APP_ROOT }}/current/${{ env.SERVER_SUBDIR }}
-            mkdir -p ${{ env.APP_ROOT }}/current/${{ env.CLIENT_SUBDIR }}
+            mkdir -p ${{ env.APP_ROOT }}/tmp
+            # Clean replace: drop current each deploy (no backups)
+            rm -rf ${{ env.APP_ROOT }}/current
+            mkdir -p ${{ env.APP_ROOT }}/current
 
-      - name: Upload server (raw)
+      # Upload tarball
+      - name: Upload bundle
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ env.EC2_HOST }}
           username: ubuntu
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: "server/**"
-          target: "${{ env.APP_ROOT }}/current/server"
+          source: "${{ steps.pack.outputs.tar }}"
+          target: "${{ env.APP_ROOT }}/tmp"
           overwrite: true
 
-      - name: Upload client (raw)
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ env.EC2_HOST }}
-          username: ubuntu
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: "client/**"
-          target: "${{ env.APP_ROOT }}/current/client"
-          overwrite: true
-
-      - name: Build & run on EC2 (PM2 + Nginx)
+      # Unzip, install, run server with PM2, build client on EC2, publish to nginx
+      - name: Deploy & run on EC2
         uses: appleboy/ssh-action@v1.1.0
         with:
           host: ${{ env.EC2_HOST }}
@@ -59,11 +64,16 @@ jobs:
           script: |
             set -euo pipefail
             APP_NAME="${{ env.APP_NAME }}"
-            ROOT="${{ env.APP_ROOT }}/current"
-            SERVER="$ROOT/${{ env.SERVER_SUBDIR }}"
-            CLIENT="$ROOT/${{ env.CLIENT_SUBDIR }}"
+            ROOT="${{ env.APP_ROOT }}"
+            CURR="$ROOT/current"
+            TAR="$ROOT/tmp/${{ env.APP_NAME }}.tgz"
+            SERVER="$CURR/server"
+            CLIENT="$CURR/client"
 
-            # Node 22 + npm 10.9 + pm2
+            # Unpack into current/
+            tar -C "$CURR" -xzf "$TAR"
+
+            # Ensure Node 22 + npm 10.9 + pm2
             if ! command -v node >/dev/null 2>&1 || [ "$(node -v | cut -d. -f1)" != "v22" ]; then
               curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
               sudo apt-get install -y nodejs
@@ -71,7 +81,7 @@ jobs:
             sudo npm -g i npm@10.9.3
             command -v pm2 >/dev/null 2>&1 || sudo npm -g i pm2
 
-            # --- SERVER ---
+            # ---------- SERVER ----------
             cat > "$SERVER/.env" <<'ENV'
             DB_HOST=127.0.0.1
             DB_PORT=3306
@@ -96,28 +106,23 @@ jobs:
             fi
             pm2 save
 
-            # --- CLIENT (build on EC2) ---
-            echo "REACT_APP_API_BASE=/api" > "$CLIENT/.env.production"
-            echo "VITE_API_BASE=/api"     >> "$CLIENT/.env.production"
+            # ---------- CLIENT ----------
+            # Point frontend to backend via Nginx proxy at /api
+            printf "REACT_APP_API_BASE=/api\nVITE_API_BASE=/api\n" > "$CLIENT/.env.production"
 
             cd "$CLIENT"
             export CI=false
-            if [ -f package.json ]; then
-              if [ -f package-lock.json ]; then npm ci; else npm i; fi
-              if npm run | grep -q "^  build"; then npm run build; fi
-            else
-              echo "No client/package.json found; skipping client build."
-            fi
+            if [ -f package-lock.json ]; then npm ci; else npm i; fi
+            if npm run | grep -q "^  build"; then npm run build; else echo "No build script; skipping."; fi
 
-            # --- NGINX (serve / + proxy /api -> 127.0.0.1:3000) ---
+            # ---------- NGINX ----------
             if ! dpkg -s nginx >/dev/null 2>&1; then
               sudo apt-get update -y && sudo apt-get install -y nginx
             fi
 
-            BUILD_DIR="$CLIENT/build"
-            if [ -d "$BUILD_DIR" ]; then
+            if [ -d "$CLIENT/build" ]; then
               sudo mkdir -p /var/www/$APP_NAME
-              sudo rsync -a --delete "$BUILD_DIR/" /var/www/$APP_NAME/
+              sudo rsync -a --delete "$CLIENT/build/" /var/www/$APP_NAME/
             fi
 
             sudo tee /etc/nginx/sites-available/$APP_NAME.conf >/dev/null <<NGINX
@@ -150,4 +155,4 @@ jobs:
                         sudo systemctl enable --now nginx
                         sudo systemctl reload nginx || true
 
-                        echo "✅ Deploy done (current/ path)."
+                        echo "✅ Clean deploy complete."
